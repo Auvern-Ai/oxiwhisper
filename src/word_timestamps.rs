@@ -98,11 +98,9 @@ pub(crate) fn build_word_timed_transcript(
     // Build word-level segments from the per-token alignment.
     let words = build_word_segments(&token_texts, &token_times, token_probs);
 
-    let text: String = words
-        .iter()
-        .map(|w| w.word.as_str())
-        .collect::<Vec<_>>()
-        .join("");
+    // Alignment trims word boundaries for timing. Preserve the decoder's
+    // original token text so spaces and punctuation survive in the transcript.
+    let text = tokenizer::decode(tokens, vocab);
 
     WordTimedTranscript {
         text,
@@ -238,6 +236,7 @@ mod tests {
         let wtt = build_word_timed_transcript(&dr, &vocab, Some("en".into()));
         // We don't assert exact timing, only structural properties.
         assert!(!wtt.words.is_empty(), "should produce word segments");
+        assert_eq!(wtt.text, "hello world");
         for w in &wtt.words {
             assert!(w.start <= w.end, "start <= end invariant: {:?}", w);
             assert!(w.start >= 0.0, "start must be non-negative");
