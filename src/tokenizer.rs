@@ -23,6 +23,8 @@ pub const TIMESTAMP_RESOLUTION: f32 = 0.02;
 
 /// Special token IDs for Whisper
 pub struct SpecialTokens {
+    /// English-only models omit the language tokens and shift later IDs down one.
+    pub multilingual: bool,
     /// `<|startoftranscript|>` — begins the decoder sequence.
     pub sot: u32,
     /// `<|endoftext|>` — signals the end of the decoder output.
@@ -40,12 +42,10 @@ pub struct SpecialTokens {
 }
 
 impl SpecialTokens {
-    /// Initialise special token IDs for a Whisper multilingual vocabulary.
-    ///
-    /// The `n_vocab` argument is accepted for forward compatibility but not
-    /// currently used — the token IDs are fixed for all Whisper models.
-    pub fn new(_n_vocab: usize) -> Self {
-        // Whisper special tokens are at the end of the vocabulary
+    /// Initialise special token IDs for the model's vocabulary family.
+    /// English-only models have 51,864 embeddings and omit the language-token
+    /// slot, shifting SOT and all later special IDs down by one.
+    pub fn new(n_vocab: usize) -> Self {
         // For multilingual models:
         // <|endoftext|> = 50256
         // <|startoftranscript|> = 50258
@@ -57,14 +57,17 @@ impl SpecialTokens {
         // <|nospeech|> = 50362
         // <|notimestamps|> = 50363
         // timestamp tokens at 50364..
+        let multilingual = n_vocab != 51864;
+        let shift = u32::from(!multilingual);
         Self {
+            multilingual,
             eot: 50256,
-            sot: 50258,
-            translate: 50358,
-            transcribe: 50359,
-            no_speech: 50362,
-            no_timestamps: 50363,
-            sot_prev: 50361,
+            sot: 50258 - shift,
+            translate: 50358 - shift,
+            transcribe: 50359 - shift,
+            no_speech: 50362 - shift,
+            no_timestamps: 50363 - shift,
+            sot_prev: 50361 - shift,
         }
     }
 
