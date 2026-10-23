@@ -124,13 +124,18 @@ pub fn decode(
         head_dim,
     };
 
-    // Detect language automatically if none is specified.
-    let (lang_token, detected_language) = match opts.language {
-        Some(lang) => (special.language_token(lang), None),
-        None => {
-            let token = detect_language(&ctx, &special)?;
-            let lang_code = language_code_from_token(token);
-            (token, Some(lang_code))
+    // English-only checkpoints have no language tokens. Running multilingual
+    // detection on them treats ordinary task tokens as language logits.
+    let (lang_token, detected_language) = if !special.multilingual {
+        (None, Some("en".to_string()))
+    } else {
+        match opts.language {
+            Some(lang) => (Some(special.language_token(lang)), None),
+            None => {
+                let token = detect_language(&ctx, &special)?;
+                let lang_code = language_code_from_token(token);
+                (Some(token), Some(lang_code))
+            }
         }
     };
 
@@ -360,11 +365,11 @@ pub(crate) fn encode_prompt_text(text: &str, vocab: &[crate::model::VocabEntry])
 /// Build the decoder prompt token sequence.
 ///
 /// Prepends `sot_prev + initial_tokens` when any initial tokens are provided,
-/// then appends `sot`, the language token, `transcribe`, and optionally
+/// then appends `sot`, an optional language token, the task token, and optionally
 /// `no_timestamps`.
 pub(crate) fn build_prompt(
     special: &SpecialTokens,
-    lang_token: u32,
+    lang_token: Option<u32>,
     task_token: u32,
     timestamps: bool,
     initial_tokens: &[u32],
@@ -376,7 +381,9 @@ pub(crate) fn build_prompt(
         prompt.extend_from_slice(initial_tokens);
     }
     prompt.push(special.sot);
-    prompt.push(lang_token);
+    if let Some(lang_token) = lang_token {
+        prompt.push(lang_token);
+    }
     prompt.push(task_token);
     if !timestamps {
         prompt.push(special.no_timestamps);
@@ -673,7 +680,7 @@ mod tests {
     fn test_build_prompt_without_initial_tokens() {
         let special = SpecialTokens::new(51865);
         let lang = special.language_token("en");
-        let prompt = build_prompt(&special, lang, special.transcribe, false, &[]);
+        let prompt = build_prompt(&special, Some(lang), special.transcribe, false, &[]);
         assert_eq!(prompt[0], special.sot);
         assert_eq!(prompt[1], lang);
         assert_eq!(prompt[2], special.transcribe);
@@ -686,7 +693,7 @@ mod tests {
         let special = SpecialTokens::new(51865);
         let lang = special.language_token("en");
         let initial = vec![10u32, 20, 30];
-        let prompt = build_prompt(&special, lang, special.transcribe, false, &initial);
+        let prompt = build_prompt(&special, Some(lang), special.transcribe, false, &initial);
         assert_eq!(prompt[0], special.sot_prev);
         assert_eq!(prompt[1], 10);
         assert_eq!(prompt[2], 20);
@@ -702,7 +709,7 @@ mod tests {
     fn test_build_prompt_with_timestamps() {
         let special = SpecialTokens::new(51865);
         let lang = special.language_token("en");
-        let prompt = build_prompt(&special, lang, special.transcribe, true, &[]);
+        let prompt = build_prompt(&special, Some(lang), special.transcribe, true, &[]);
         assert_eq!(prompt.len(), 3);
         assert_eq!(prompt[0], special.sot);
         assert_eq!(prompt[2], special.transcribe);
@@ -724,7 +731,13 @@ mod tests {
         combined.append(&mut all_initial);
         let all_initial = combined;
 
-        let prompt = build_prompt(&special, lang, special.transcribe, false, &all_initial);
+        let prompt = build_prompt(
+            &special,
+            Some(lang),
+            special.transcribe,
+            false,
+            &all_initial,
+        );
         // Should be: [sot_prev, 10, 20, 30, 40, sot, lang, transcribe, no_timestamps]
         assert_eq!(prompt[0], special.sot_prev);
         assert_eq!(prompt[1], 10);
@@ -748,7 +761,13 @@ mod tests {
         // Mimic decode() logic with no initial_prompt
         let all_initial = previous;
 
-        let prompt = build_prompt(&special, lang, special.transcribe, false, &all_initial);
+        let prompt = build_prompt(
+            &special,
+            Some(lang),
+            special.transcribe,
+            false,
+            &all_initial,
+        );
         // Should be: [sot_prev, 50, 60, 70, sot, lang, transcribe, no_timestamps]
         assert_eq!(prompt[0], special.sot_prev);
         assert_eq!(prompt[1], 50);
@@ -762,8 +781,8 @@ mod tests {
     fn test_build_prompt_translate_emits_translate_token() {
         let special = SpecialTokens::new(51865);
         let lang = special.language_token("en");
-        let prompt_t = build_prompt(&special, lang, special.transcribe, false, &[]);
-        let prompt_tr = build_prompt(&special, lang, special.translate, false, &[]);
+        let prompt_t = build_prompt(&special, Some(lang), special.transcribe, false, &[]);
+        let prompt_tr = build_prompt(&special, Some(lang), special.translate, false, &[]);
         assert_eq!(prompt_t[2], special.transcribe);
         assert_eq!(prompt_tr[2], special.translate);
         assert_ne!(special.transcribe, special.translate);
@@ -775,5 +794,19 @@ mod tests {
         let special = SpecialTokens::new(51865);
         assert_eq!(special.translate, 50358);
         assert_eq!(special.transcribe, 50359);
+    }
+
+    #[test]
+    fn english_only_prompt_uses_shifted_ids_without_language() {
+        let special = SpecialTokens::new(51864);
+        assert!(!special.multilingual);
+        assert_eq!(special.sot, 50257);
+        assert_eq!(special.translate, 50357);
+        assert_eq!(special.transcribe, 50358);
+        assert_eq!(special.no_timestamps, 50362);
+        assert_eq!(
+            build_prompt(&special, None, special.transcribe, false, &[]),
+            vec![50257, 50358, 50362]
+        );
     }
 }
