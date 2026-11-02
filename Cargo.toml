@@ -1,6 +1,7 @@
 [package]
 name = "oxiwhisper"
 version = "0.1.2"
+publish = false
 edition = "2024"
 authors = ["COOLJAPAN OU (Team Kitasan)"]
 license = "Apache-2.0"
